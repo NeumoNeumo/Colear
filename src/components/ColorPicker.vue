@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, Ref } from "vue";
+import draggable from "vuedraggable";
 
 interface Color {
   r: number;
@@ -8,7 +9,12 @@ interface Color {
   a: number;
 }
 
-type State = "add" | "remove" | "normal";
+interface PaletteItem {
+  color: Color;
+  order: number;
+}
+
+type State = "remove" | "normal";
 
 const magnifierData: Ref<Color[][]> = ref(
   new Array(11)
@@ -19,11 +25,12 @@ const imageCanvas = ref<HTMLCanvasElement | null>(null);
 const ctx = ref<CanvasRenderingContext2D | null>(null);
 const magnifier = ref<HTMLDivElement | null>(null);
 const selectedColor = ref<Color>({ r: 0, g: 0, b: 0, a: 0 });
-const paletteData = ref<Color[]>([]);
-const selectedN = ref<number>(-1);
+const paletteData = ref<PaletteItem[]>([]);
+const selectedOrder = ref<number>(-1);
 let imageSrcArray: Uint8ClampedArray | null = null;
+let order = 0;
 let state = ref<State>("normal");
-// const K = 5;
+const K = 5;
 
 function getGrayScale(color: Color): number {
   return 0.299 * color.r + 0.587 * color.g + 0.114 * color.b;
@@ -31,6 +38,14 @@ function getGrayScale(color: Color): number {
 
 function isBright(color: Color): boolean {
   return (getGrayScale(color) * color.a) / 255.0 > 127;
+}
+
+function order2idx(order: number): number {
+  return paletteData.value.findIndex((color) => color.order == order);
+}
+
+function isSelected(): boolean {
+  return order2idx(selectedOrder.value) != -1;
 }
 
 function updataImageSrcData() {
@@ -43,102 +58,121 @@ function updataImageSrcData() {
   ).data;
 }
 
-function handleAdd() {
-  selectedN.value = -1;
-  refreshCanvas();
-  if (state.value == "add") state.value = "normal";
-  else state.value = "add";
-}
-
 function handleRemove() {
-  selectedN.value = -1;
+  selectedOrder.value = -1;
   refreshCanvas();
   if (state.value == "remove") state.value = "normal";
   else state.value = "remove";
 }
 
+function clearAll(){
+  paletteData.value = [];
+  selectedOrder.value = -1;
+  refreshCanvas();
+  state.value = "normal";
+}
+
+function color2string(color: Color): string {
+  return `rgb(${color.r}, ${color.g}, ${color.b})`;
+}
+
+function string2color(str: string): Color {
+  const [r, g, b] = str
+    .slice(4, -1)
+    .split(",")
+    .map((s) => parseInt(s));
+  return { r, g, b, a: 255 };
+}
+
+function color2hsl(color: Color): { h: number; s: number; l: number } {
+  const r = color.r / 255;
+  const g = color.g / 255;
+  const b = color.b / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h: number;
+  if (max == min) {
+    h = 0;
+  } else if (max == r && g >= b) {
+    h = 60 * ((g - b) / (max - min));
+  } else if (max == r && g < b) {
+    h = 60 * ((g - b) / (max - min)) + 360;
+  } else if (max == g) {
+    h = 60 * ((b - r) / (max - min)) + 120;
+  } else {
+    // max == b
+    h = 60 * ((r - g) / (max - min)) + 240;
+  }
+  let s: number;
+  if (max == min) {
+    s = 0;
+  } else {
+    s = ((max - min) / max) * 100;
+  }
+  const l = ((max + min) / 2) * 100;
+  return { h, s, l };
+}
+
 function refreshPaletteData() {
   updataImageSrcData();
   if (!imageSrcArray) return;
-  // let centroids: Color[] = [];
+  const colorCounts = new Map<string, number>();
 
-  // for (let i = 0; i < K; i++) {
-  //   const randomInt = Math.floor((Math.random() * imageSrcArray.length) / 4);
-  //   centroids.push({
-  //     r: imageSrcArray[randomInt * 4],
-  //     g: imageSrcArray[randomInt * 4 + 1],
-  //     b: imageSrcArray[randomInt * 4 + 2],
-  //     a: 255,
-  //   });
-  // }
+  for (let i = 0; i < imageSrcArray.length; i += 4) {
+    const r = imageSrcArray[i];
+    const g = imageSrcArray[i + 1];
+    const b = imageSrcArray[i + 2];
+    const a = imageSrcArray[i + 3];
+    const color: Color = { r, g, b, a };
+    const s = color2hsl(color).s;
+    if (getGrayScale(color) > 240 || getGrayScale(color) < 15 || s < 50)
+      continue;
+    const count = colorCounts.get(color2string(color)) || 0;
+    if (count != 0) {
+      colorCounts.set(color2string(color), count + 1);
+    } else {
+      colorCounts.set(color2string(color), 1);
+    }
+  }
+  const colors = Array.from(colorCounts.entries())
+    .sort((a, b) => a[1] - b[1])
+    .map(([color]) => string2color(color));
 
-  // let clusters: Color[][] = Array.from({ length: K }, () => []);
-  // let population: number[] = Array.from({ length: K }, () => 0);
-  // while (true) {
-  //   for (let i = 0; i < imageSrcArray.length / 4; i++) {
-  //     let closestCentroidIndex = -1;
-  //     let minDist2 = Infinity;
-  //     for (let j = 0; j < K; j++) {
-  //       const dist2 =
-  //         Math.pow(imageSrcArray[4 * i] - centroids[j].r, 2) +
-  //         Math.pow(imageSrcArray[4 * i + 1] - centroids[j].b, 2) +
-  //         Math.pow(imageSrcArray[4 * i + 2] - centroids[j].g, 2);
-  //       if (dist2 < minDist2) {
-  //         minDist2 = dist2;
-  //         closestCentroidIndex = j;
-  //       }
-  //     }
-  //     clusters[closestCentroidIndex].push({
-  //       r: imageSrcArray[i * 4],
-  //       g: imageSrcArray[i * 4 + 1],
-  //       b: imageSrcArray[i * 4 + 2],
-  //       a: 255,
-  //     });
-  //   }
+  let distinctColors: { color: Color; order: number }[] = [];
+  while (true) {
+    const c = colors.pop();
+    if (c == undefined) break;
+    let similar = false;
+    for (let i = 0; i < distinctColors.length; i++)
+      if (isSimilar(c, distinctColors[i].color)) {
+        similar = true;
+        break;
+      }
+    if (similar) continue;
+    distinctColors.push({ color: c, order: order++ });
+    if (distinctColors.length >= K) break;
+  }
 
-  //   let newCentroids: Color[] = [];
-  //   for (let i = 0; i < K; i++) {
-  //     population[i] = clusters[i].length;
-  //   }
-  //   for (let i = 0; i < K; i++) {
-  //     if (clusters[i].length > 0) {
-  //       const sumR = clusters[i].reduce((sum, color) => sum + color.r, 0);
-  //       const sumG = clusters[i].reduce((sum, color) => sum + color.g, 0);
-  //       const sumB = clusters[i].reduce((sum, color) => sum + color.b, 0);
-
-  //       newCentroids.push({
-  //         r: sumR / clusters[i].length,
-  //         g: sumG / clusters[i].length,
-  //         b: sumB / clusters[i].length,
-  //         a: 255,
-  //       });
-  //     } else {
-  //       newCentroids.push(centroids[i]);
-  //     }
-  //   }
-  //   if (isConverged(centroids, newCentroids)) break;
-  //   centroids = newCentroids;
-  // }
-  // paletteData.value = centroids
-  //   .map((value, index) => ({ value, order: population[index] }))
-  //   .sort((a, b) => b.order - a.order)
-  //   .map(({ value }) => value);
+  paletteData.value = distinctColors;
 }
 
-// function isConverged(centroids: Color[], newCentroids: Color[]) {
-//   const epsilon = 1;
-//   for (let i = 0; i < centroids.length; i++) {
-//     if (
-//       Math.abs(centroids[i].r - newCentroids[i].r) > epsilon &&
-//       Math.abs(centroids[i].g - newCentroids[i].g) > epsilon &&
-//       Math.abs(centroids[i].b - newCentroids[i].b) > epsilon
-//     )
-//       return false;
-//   }
-//   return true;
-// }
-
 onMounted(() => {
+  initComponents();
+  loadDemo();
+  addPasteListener();
+  addKeyListener();
+});
+
+function addKeyListener() {
+  document.addEventListener("keydown", (event) => {
+    if (!"0123456789".includes(event.key)) return;
+    const keyValue = Number(event.key);
+    if (keyValue > paletteData.value.length) return;
+    clickColorBlk(keyValue - 1);
+  });
+}
+
+function initComponents() {
   const _ctx = imageCanvas.value?.getContext("2d", {
     willReadFrequently: true,
   });
@@ -148,45 +182,81 @@ onMounted(() => {
   const _magnifier = magnifier.value;
   if (!_magnifier) return;
   magnifier.value = _magnifier;
+}
 
-  var img = new Image();
+function loadDemo() {
+  let img = new Image();
   img.onload = function () {
-    ctx.value?.drawImage(img, 0, 0);
+    if (!ctx.value || !imageCanvas.value) return;
+    ctx.value.fillStyle = "white";
+    ctx.value.fillRect(0, 0, imageCanvas.value.width, imageCanvas.value.height);
+    ctx.value.drawImage(img, 0, 0);
     refreshPaletteData();
   };
-  img.src = "scenery.jpeg";
-});
+  img.src = "image.webp";
+}
+
+function addPasteListener() {
+  document.addEventListener("paste", async (e: ClipboardEvent) => {
+    e.preventDefault();
+    const hasAsync = typeof navigator?.clipboard?.read === "function";
+    if (hasAsync) {
+      console.log("Use async");
+      const clipboardItems = await navigator.clipboard.read();
+      for (const clipboardItem of clipboardItems) {
+        const imageType = clipboardItem.types?.find((type) =>
+          type.startsWith("image/")
+        );
+        if (imageType) {
+          const blob = await clipboardItem.getType(imageType);
+          loadNewImg(blob);
+        }
+      }
+    } else {
+      console.log("Use legacy");
+      for (const clipboardFile of e.clipboardData?.files ?? []) {
+        if (clipboardFile.type.startsWith("image/")) {
+          loadNewImg(clipboardFile);
+        }
+      }
+    }
+  });
+}
 
 function onFileChange(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
-  if (ctx.value && file) {
-    const img = new Image();
-    img.onload = () => {
-      if (imageCanvas.value) {
-        imageCanvas.value.width = img.width;
-        imageCanvas.value.height = img.height;
-      }
-      ctx.value?.drawImage(img, 0, 0);
-      refreshPaletteData();
-    };
-    img.src = URL.createObjectURL(file);
+  if (!file) return;
+  loadNewImg(file);
+}
+
+function loadNewImg(obj: Blob | MediaSource) {
+  if (!ctx.value) return;
+  const img = new Image();
+  img.onload = () => {
+    if (imageCanvas.value) {
+      imageCanvas.value.width = img.width;
+      imageCanvas.value.height = img.height;
+    }
+    ctx.value?.drawImage(img, 0, 0);
+    refreshPaletteData();
+  };
+  img.src = URL.createObjectURL(obj);
+}
+
+function handleColorBlk(order: number) {
+  switch (state.value) {
+    case "normal":
+      clickColorBlk(order);
+      break;
+    case "remove":
+      paletteData.value.splice(order, 1);
+      break;
   }
 }
 
-function handleColorBlk(idx: number) {
-  switch(state.value){
-    case 'normal':
-      selectColorBlk(idx);
-      break;
-    case 'remove':
-      paletteData.value.splice(idx, 1);
-      break;
-  }
-}
-
-function selectColorBlk(idx: number) {
-  if (idx == selectedN.value) selectedN.value = -1;
-  else selectedN.value = idx;
+function clickColorBlk(order: number) {
+  if (order == selectedOrder.value) selectedOrder.value = -1;
+  else selectedOrder.value = order;
   refreshCanvas();
 }
 
@@ -199,39 +269,61 @@ function paintFromArray(arr: Uint8ClampedArray) {
   );
 }
 
+function isSimilar(a: Color, b: Color) {
+  const epsilon = 20;
+  if ((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2 < 3 * epsilon ** 2)
+    return true;
+  return false;
+}
+
 function refreshCanvas() {
   if (!ctx.value || !imageSrcArray || !imageCanvas.value) return;
-  if (selectedN.value == -1) {
+  const selectedIdx = order2idx(selectedOrder.value);
+  if (selectedIdx == -1) {
     paintFromArray(imageSrcArray);
     return;
   }
   let modImageData = new Uint8ClampedArray(
     imageCanvas.value.width * imageCanvas.value.height * 4
   );
-  const epsilon = 50;
-  const r_t = paletteData.value[selectedN.value].r;
-  const g_t = paletteData.value[selectedN.value].g;
-  const b_t = paletteData.value[selectedN.value].b;
-  const a_t = paletteData.value[selectedN.value].a;
+  const color_t = paletteData.value[selectedIdx].color;
+  const r_t = color_t.r;
+  const g_t = color_t.g;
+  const b_t = color_t.b;
+  const a_t = color_t.a;
   for (let i = 0; i < imageSrcArray.length; i += 4) {
     const r = imageSrcArray[i];
     const g = imageSrcArray[i + 1];
     const b = imageSrcArray[i + 2];
-    if((r_t - r)**2 + (g_t - g)**2 + (b_t - b)**2 > epsilon){
-      const grayScale = getGrayScale({ r, g, b, a: 255 });
+    const color = { r, g, b, a: 255 };
+    if (!isSimilar(color_t, color)) {
+      const grayScale = getGrayScale(color);
       modImageData[i] = modImageData[i + 1] = modImageData[i + 2] = grayScale;
       modImageData[i + 3] = imageSrcArray[i + 3] * 0.5;
-    }else{
+    } else {
       modImageData[i] = r_t;
       modImageData[i + 1] = g_t;
       modImageData[i + 2] = b_t;
       modImageData[i + 3] = a_t;
+      const dilationR = 1;
+      for (let j = -dilationR; j <= dilationR; ++j) {
+        for (let k = -dilationR; k <= dilationR; ++k) {
+          const idx = i + 4 * (imageCanvas.value.width * j + k);
+          if (idx < 0 || idx >= modImageData.length) continue;
+          modImageData[idx] = r_t;
+          modImageData[idx + 1] = g_t;
+          modImageData[idx + 2] = b_t;
+          modImageData[idx + 3] = a_t;
+        }
+      }
     }
   }
   paintFromArray(modImageData);
 }
 
 function updateMagnifier(e: MouseEvent) {
+  if (state.value != "normal" || isSelected()) return;
+
   if (!magnifier.value || !ctx.value) return;
   const x = e.offsetX;
   const y = e.offsetY;
@@ -284,8 +376,8 @@ function hideMagnifier() {
 }
 
 function clickMagnifier() {
-  if (state.value != "add") return;
-  paletteData.value.push(magnifierData.value[5][5]);
+  if (state.value != "normal" || isSelected()) return;
+  paletteData.value.push({ color: magnifierData.value[5][5], order: order++ });
 }
 </script>
 
@@ -333,24 +425,33 @@ function clickMagnifier() {
       <h1 class="font-bold text-sm uppercase">Palette</h1>
       <div class="flex gap-2 h-12">
         <div class="flex flex-col">
-          <button class="PaletteBtn transition-colors" @click="handleAdd" :style="{ backgroundColor: state == 'add' ? 'aqua' : 'white' }">
+          <button class="PaletteBtn transition-colors" @click="clearAll">
             <svg
+              xmlns="http://www.w3.org/2000/svg"
+              xmlns:xlink="http://www.w3.org/1999/xlink"
+              fill="#000000"
+              version="1.1"
+              id="Capa_1"
               width="15"
               height="15"
-              viewBox="0 0 15 15"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              class=""
+              viewBox="0 0 485 485"
+              xml:space="preserve"
             >
-              <path
-                d="M8 2.75C8 2.47386 7.77614 2.25 7.5 2.25C7.22386 2.25 7 2.47386 7 2.75V7H2.75C2.47386 7 2.25 7.22386 2.25 7.5C2.25 7.77614 2.47386 8 2.75 8H7V12.25C7 12.5261 7.22386 12.75 7.5 12.75C7.77614 12.75 8 12.5261 8 12.25V8H12.25C12.5261 8 12.75 7.77614 12.75 7.5C12.75 7.22386 12.5261 7 12.25 7H8V2.75Z"
-                fill="currentColor"
-                fill-rule="evenodd"
-                clip-rule="evenodd"
-              ></path>
+              <g>
+                <g>
+                  <rect x="67.224" width="350.535" height="71.81" />
+                  <path
+                    d="M417.776,92.829H67.237V485h350.537V92.829H417.776z M165.402,431.447h-28.362V146.383h28.362V431.447z M256.689,431.447    h-28.363V146.383h28.363V431.447z M347.97,431.447h-28.361V146.383h28.361V431.447z"
+                  />
+                </g>
+              </g>
             </svg>
           </button>
-          <button class="PaletteBtn transition-colors" @click="handleRemove" :style="{ backgroundColor: state == 'remove' ? 'aqua' : 'white' }">
+          <button
+            class="PaletteBtn transition-colors"
+            @click="handleRemove"
+            :style="{ backgroundColor: state == 'remove' ? 'aqua' : 'white' }"
+          >
             <svg
               width="15"
               height="15"
@@ -368,26 +469,37 @@ function clickMagnifier() {
             </svg>
           </button>
         </div>
-        <div class="palette w-full flex rounded-lg overflow-hidden">
-          <div
-            v-for="(color, idx) of paletteData"
-            class="flex-1 cursor-pointer flex"
-            :style="{
-              backgroundColor: `rgba(${color.r}, ${color.g}, ${color.b}, ${
-                color.a / 255.0
-              })`,
-            }"
-            @click="handleColorBlk(idx)"
-          >
+        <draggable
+          class="palette w-full flex rounded-lg overflow-hidden"
+          tag="TransitionGroup"
+          v-model="paletteData"
+          :component-data="{
+            tag: 'div',
+          }"
+          animation="200"
+          ghostClass="ghost"
+          itemKey="order"
+        >
+          <template #item="{ element }: { element: PaletteItem }">
             <div
-              v-if="selectedN == idx"
-              class="h-2.5 w-2.5 mx-auto my-auto rounded-full"
+              class="flex-1 cursor-pointer flex"
               :style="{
-                backgroundColor: isBright(color) ? 'black' : 'white',
+                backgroundColor: `rgba(${element.color.r}, ${
+                  element.color.g
+                }, ${element.color.b}, ${element.color.a / 255.0})`,
               }"
-            ></div>
-          </div>
-        </div>
+              @click="handleColorBlk(element.order)"
+            >
+              <div
+                v-if="selectedOrder == element.order"
+                class="h-2.5 w-2.5 mx-auto my-auto rounded-full"
+                :style="{
+                  backgroundColor: isBright(element.color) ? 'black' : 'white',
+                }"
+              ></div>
+            </div>
+          </template>
+        </draggable>
       </div>
     </div>
   </div>
@@ -439,5 +551,9 @@ div#palette button.PaletteBtn:hover {
     var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
   --tw-border-opacity: 1;
   border-color: rgb(156 163 175 / var(--tw-border-opacity)) /* #9ca3af */;
+}
+.ghost {
+  opacity: 0;
+  background: white;
 }
 </style>
