@@ -385,7 +385,11 @@ function clickMagnifier() {
   <div
     class="p-3 relative w-full sm:w-[640px] rounded-lg shadow-md bg-white border border-gray"
   >
-    <input class="mb-2" type="file" accept="image/*" @change="onFileChange" />
+    <input class="hidden" id="inputFile" type="file" accept="image/*" @change="onFileChange"/>
+    <div>
+    <label for="inputFile" class="cursor-pointer underline">Click</label>
+    to upload an image or just paste an image from your clipboard by `ctrl + v`.
+    </div>
     <div class="w-full h-full">
       <canvas
         class="block cursor-crosshair relative mx-auto"
